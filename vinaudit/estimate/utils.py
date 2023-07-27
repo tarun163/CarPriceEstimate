@@ -10,8 +10,8 @@ def check_data(year, make, model, mileage):
     if not model or type(model) != str:
         return "model should be integer", data
     
-    if mileage and type(mileage) != int:
-        return "mileage should be integer", data
+    # if mileage and type(mileage) != int:
+    #     return "mileage should be integer", data
     
     data["year"] = year
     data["make"] = make.lower()

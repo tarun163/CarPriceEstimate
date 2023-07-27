@@ -15,14 +15,14 @@
   </head>
   <body>
     <div class="alert position-absolute"></div>
-    <div class="card container mt-5" style="width: 38rem;">
+    <div class="card container mt-3" style="width: 38rem;">
       <div class="card-body">
         <form id="uploadData">{% csrf_token %}
           <div class="mb-3">
             <label for="formFile" class="form-label"><h4>Input Car Value data (.txt formate)</h4></label>
             <input class="form-control" type="file" id="formFile" required>
           </div>
-          <button type="submit" class="btn btn-primary" >Upload</button>
+          <button type="submit" class="btn btn-primary" onclick=myfunc()>Upload</button>
         </form>
       </div>
     </div>
@@ -49,7 +49,7 @@
               <label for="mileage" class="form-label">mileage</label>
               <input type="text" class="form-control" id="mileage" name="mileage">
             </div>
-            <button type="submit" class="btn btn-primary" >Submit</button>
+            <button type="submit" id="submit-data" class="btn btn-primary" onclick=myfunc()>Submit</button>
           </form>
         </div>
       </div>
@@ -76,6 +76,12 @@
     </section>
   </div>
   <script>
+
+    function myfunc(){
+      console.log("button clicked")
+      var pesponse_alert = "<div class='alert alert-primary' role='alert'>" + "Proccessing....." + "</div>"
+      $('.alert').html(pesponse_alert);
+    }
 
     function capitalizeFirstLetter(str) {
       const [firstChar, ...rest] = str;
@@ -155,15 +161,18 @@
           contentType: false,
           success: function(data) {
             if(data.success){
-
+        
               $("#carData").trigger("reset");
+              
               result += "<h4> Estimate Result $" + data.final_result;
+
+              pesponse_alert += "<div class='alert alert-primary' role='alert'>" + data.message + "</div>"
+
               data = data.top_result_data
               for (var i = 0; i < data.length; i++) {
                   output += "<tr> <th scope='row'> " + i +"</th> <td>" + data[i].year + " " + capitalizeFirstLetter(data[i].make) + " " + capitalizeFirstLetter(data[i].model) + " " +data[i].trim + "</td> <td>"+data[i].listing_price+"</td> <td>"+data[i].listing_mileage+"</td> <td>"+ data[i].dealer_city + " " + data[i].dealer_state +"</td> </tr>"
               }
 
-              pesponse_alert += "<div class='alert alert-primary' role='alert'>" + data.message + "</div>"
   
               $('.car_details').html(output);
               $('.result').html(result)

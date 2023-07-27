@@ -104,8 +104,9 @@ def estimate_result(request):
         data = CarValueData.objects.filter(~Q(listing_price = "nan"), ~Q(listing_mileage = "nan"), ~Q(listing_price = 0), year=year, make=make, model=model).order_by('listing_price')
         
         if mileage != None and mileage != '':
-            final_result_data = data.filter(listing_mileage=mileage)[:100]
             
+            final_result_data = data.filter(listing_mileage=mileage)[:100]
+            total_price = 0
             for i in final_result_data:
                 total_price += i.listing_price
             
