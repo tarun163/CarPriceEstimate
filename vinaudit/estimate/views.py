@@ -1,45 +1,50 @@
+import os
+import random
 import pandas as pd
+
 from django.shortcuts import render
-from django.db.models import Avg
-from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
 from django.http import JsonResponse
-from django.http import JsonResponse
+
 from .models import CarValueData, EstimatedData
 from .utils import check_data, check_input_file
-import random
-import os
+from .tasks import insert_data
 
-# from .serializer import CarValueDataSerializer
-
-
+# home page
 def home(request):
     return render(request, 'front.html')
 
+# upload data
 def upload_data(request):
-    print("get call")
+    """_summary_
+
+    upload data only by csv file 
+    Async Celery task 
+    """
     if request.method == "POST":
-        
-        # txt_file = "cardata.txt"  
-        txt_file = request.FILES['file']
-        file_extension = os.path.splitext(txt_file.name)[1].lower()
-        if file_extension != '.txt':
+        # cheking file
+        file = request.FILES['file']
+        if file == None or file == '':
             return JsonResponse(data={
                 'success': False,
-                'message': 'file type should be text'
+                'message': 'please import file!'
+            })
+        # checking file type    
+        file_extension = os.path.splitext(file.name)[1].lower()
+        if file_extension != '.csv':
+            return JsonResponse(data={
+                'success': False,
+                'message': 'file should be .csv'
             })
             
-        print(txt_file)
-
-        # Read the text file using pandas with '|' delimiter
+        # convert file for checking colums    
         try:
-            df = pd.read_csv(txt_file, delimiter='|')
+            df = pd.read_csv(file)
         except:
             return JsonResponse(data={
                 'success': False,
                 'message': 'some thing went wrong'
             })
-        
         keys = list(df.keys())
         check_list = check_input_file(keys)
 
@@ -47,65 +52,131 @@ def upload_data(request):
             return JsonResponse(data={
                 'success': False,
                 'error': check_list,
-            })
-            
-            
-        df['listing_price'] = df['listing_price'].fillna(0)
-        df['listing_mileage'] = df['listing_mileage'].fillna(0)  
-        df['year'] = df['year'].fillna(0) 
-        df['trim'] = df['trim'].fillna('') 
-        df['make'] = df['make'].str.lower() 
-        df['model'] = df['model'].str.lower()  
+            }) 
         
-        data_dict = df.to_dict('records')
-        # CarValueData.objects.bulk_create(data_dict)
-        i = 0
-        for ins in data_dict:
-            try:
-                CarValueData.objects.create(**ins)
-                print(i)
-                i += 1
-            except Exception as e:
-                print(e)    
-
-        print("Conversion successful!")
+        # upload file into folder, it should be in database
+        file_path = 'upload/' + file.name
+        with open(file_path, 'wb+') as destination:
+            for chunk in file.chunks():
+                destination.write(chunk) 
+        
+        
+        insert_data.apply_async(args=[file_path])
+        
+        print("Task received!")
         return JsonResponse(data={
             'success': True,
             'status': 'Success',
-            'message': 'Conversion successful!'
+            'message': 'Task received!'
         })
         
     return JsonResponse(data={
         'success': False,
+        'messgae': 'request should be POST'
     })
     
     
 def estimate_result(request):
-    print("get request")
     if request.method == "POST":
+        
         year = request.POST.get('year', None)
         make = request.POST.get('make', None)
         model = request.POST.get('model', None)
         mileage = request.POST.get('mileage', None)
-        
+        # checking data
         message, cleaned_data = check_data(year, make, model, mileage)
         if message:    
             return JsonResponse(data={
                 'success': False,
                 'final_result': message,
             })
-            
-        # year = cleaned_data.get('year', None)
-        # make = cleaned_data.get('make', None)
-        # model = cleaned_data.get('model', None)
-        # mileage = cleaned_data.get('mileage', None)    
         
-            
+        # taking clean data    
+        year = cleaned_data.get('year', None)
+        make = cleaned_data.get('make', None)
+        model = cleaned_data.get('model', None)
+        mileage = cleaned_data.get('mileage', None)    
+        
+        # fetchig data
         data = CarValueData.objects.filter(~Q(listing_price = "nan"), ~Q(listing_mileage = "nan"), ~Q(listing_price = 0), year=year, make=make, model=model).order_by('listing_price')
         
+        # if mileage is given then directly take first 100 data inorder to price 
         if mileage != None and mileage != '':
             
             final_result_data = data.filter(listing_mileage=mileage)[:100]
+            total_price = 0
+            for i in final_result_data:
+                total_price += i.listing_price
+            
+            final_result = round(total_price//(final_result_data.count()), -2)
+            
+            if mileage == '':
+                mileage = 0
+            
+            # saving results
+            EstimatedData.objects.create(
+                make=make,
+                year=year,
+                model=model,
+                estimated_price=final_result,
+                listing_mileage = mileage
+            )
+            
+            return JsonResponse(data={
+                'success': True,
+                'final_result': final_result,
+                'top_result_data':  list(final_result_data.values()),
+                'message': 'data fetched successfully!'
+            })
+            
+            
+        # else taking simple random sampling method for top results
+        N = data.count()  # length of data
+        if N >= 100:
+            n = 100    # total top points have to take
+            K = int(N//n)
+            # take random point to start
+            random_number = random.randint(0, K)
+           
+            result_id_list = []
+            count = 0
+            for i in range(random_number, N, K):
+                result_id_list.append(data[i].pk)
+                count += 1
+                
+                if count == 100:
+                    break
+            
+            # final data used to estimate    
+            final_result_data = data.filter(pk__in=result_id_list)    
+            total_price = 0
+            
+            for i in final_result_data:
+                total_price += i.listing_price
+            
+            # round to 100 places    
+            final_result = round(total_price//(final_result_data.count()), -2)
+            
+            if mileage == '':
+                mileage = 0
+            
+            EstimatedData.objects.create(
+                make=make,
+                year=year,
+                model=model,
+                estimated_price=final_result,
+                listing_mileage = mileage
+            )
+            
+            return JsonResponse(data={
+                'success': True,
+                'message': 'data fetched successfully!',
+                'final_result': final_result,
+                'top_result_data':  list(final_result_data.values()),
+            })
+            
+        elif N > 0 and N < 100:   
+            final_result_data = data 
             total_price = 0
             for i in final_result_data:
                 total_price += i.listing_price
@@ -130,51 +201,6 @@ def estimate_result(request):
                 'message': 'data fetched successfully!'
             })
             
-            
-        # taking simple random sampling method for top results
-        N = data.count()  # length of data
-        
-        if N > 0:
-            n = 100    # total top points have to take
-            K = int(N//n)
-            
-            random_number = random.randint(0, K)
-        
-            result_id_list = []
-            count = 0
-            for i in range(random_number, N, K):
-                result_id_list.append(data[i].pk)
-                count += 1
-                
-                if count == 100:
-                    break
-                
-            final_result_data = data.filter(pk__in=result_id_list)    
-            total_price = 0
-            
-            for i in final_result_data:
-                total_price += i.listing_price
-            
-                
-            final_result = round(total_price//(final_result_data.count()), -2)
-            
-            if mileage == '':
-                mileage = 0
-            
-            EstimatedData.objects.create(
-                make=make,
-                year=year,
-                model=model,
-                estimated_price=final_result,
-                listing_mileage = mileage
-            )
-            
-            return JsonResponse(data={
-                'success': True,
-                'message': 'data fetched successfully!',
-                'final_result': final_result,
-                'top_result_data':  list(final_result_data.values()),
-            })
         else:
             return JsonResponse(data={
                 'success': False,
@@ -186,6 +212,8 @@ def estimate_result(request):
         'success': False,
     })    
         
+            
+# celery -A vinaudit worker --loglevel=info
             
         
         
